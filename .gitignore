@@ -66,3 +66,6 @@ Thumbs.db
 
 # Docker volumes / data
 docker/postgres_data/
+
+# Local-only Claude Code project guide (not tracked)
+CLAUDE.md

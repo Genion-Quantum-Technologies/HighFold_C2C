@@ -173,8 +173,10 @@ class HighFoldTaskProcessor:
         except Exception as e:
             logger.error(f"Task {task_id} failed: {str(e)}")
             try:
+                # Persist the failure reason into tasks.info so it is visible
+                # directly from the DB / API, not only in the worker pod logs.
                 await DatabaseManager.update_task_status(
-                    connection, task_id, "failed"
+                    connection, task_id, "failed", info=str(e)
                 )
             except Exception as db_error:
                 logger.error(f"Failed to update task status: {db_error}")

@@ -167,16 +167,26 @@ class DatabaseManager:
 
     # ── Update task status ───────────────────────────────────────────────
 
+    # Cap on how much diagnostic text we persist to tasks.info (column is TEXT,
+    # but keep rows small and avoid storing a full multi-MB traceback).
+    _MAX_INFO_LEN = 4000
+
     @staticmethod
-    async def update_task_status(connection, task_id: str, status: str) -> None:
+    async def update_task_status(
+        connection, task_id: str, status: str, info: Optional[str] = None
+    ) -> None:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
             None,
-            partial(DatabaseManager._update_task_status_sync, task_id, status),
+            partial(
+                DatabaseManager._update_task_status_sync, task_id, status, info
+            ),
         )
 
     @staticmethod
-    def _update_task_status_sync(task_id: str, status: str) -> None:
+    def _update_task_status_sync(
+        task_id: str, status: str, info: Optional[str] = None
+    ) -> None:
         conn = get_db_connection_sync()
         if not conn:
             logger.error("Failed to get database connection")
@@ -200,6 +210,27 @@ class DatabaseManager:
                     )
             conn.commit()
             logger.info(f"Task {task_id} status updated to: {status}")
+
+            # Best-effort: persist the failure/diagnostic reason into tasks.info.
+            # Done as a SEPARATE statement after the status commit so that a
+            # missing column or oversized value can never prevent the task from
+            # being correctly marked finished/failed.
+            if info is not None:
+                try:
+                    with conn.cursor() as cursor:
+                        cursor.execute(
+                            "UPDATE tasks SET info = %s WHERE id = %s",
+                            (info[: DatabaseManager._MAX_INFO_LEN], task_id),
+                        )
+                    conn.commit()
+                except Exception as info_err:
+                    logger.warning(
+                        "Task %s: status set to '%s' but failed to persist info "
+                        "(is the tasks.info column present?): %s",
+                        task_id,
+                        status,
+                        info_err,
+                    )
         except Exception as e:
             logger.error(f"Failed to update task status: {e}")
         finally:

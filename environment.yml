@@ -10,8 +10,23 @@ dependencies:
   - pip
   - pip:
     # C2C dependencies (PyTorch + Transformers for T5 model)
+    #
+    # 🔴 PIN THESE. 2026-07-14: an unpinned rebuild produced torch 2.11.0+cu130 (note: cu130,
+    # even though this index says cu128) together with transformers 5.5.3, and that pair is
+    # BROKEN — `import torch._dynamo` dies with
+    #     ImportError: cannot import name 'NP_SUPPORTED_MODULES' from 'torch._dynamo.utils'
+    # (torch's own circular import; the try/except at torch/_dynamo/utils.py:131 swallows it
+    # so the symbol is never defined). transformers 5.x imports torch._dynamo eagerly from
+    # masking_utils.py:40, so EVERY `from transformers import T5…` fails — i.e. every
+    # HighFold Stage 1. The broken image sat on disk undetected for ~13 days; the service
+    # only kept working because a long-running pod still held an older image, and the next
+    # restart would have taken it down.
+    #
+    # transformers 4.x does not touch torch._dynamo. torch is left unpinned-by-version on
+    # purpose ONLY because the CUDA/JAX side of this image works and re-resolving it is a
+    # separate, riskier change — but it should be pinned too. See ADR 0012 / the devlog.
     - torch --index-url https://download.pytorch.org/whl/cu128
-    - transformers
+    - transformers==4.46.3
     # Service dependencies
     - fastapi>=0.100.0
     - uvicorn[standard]>=0.22.0

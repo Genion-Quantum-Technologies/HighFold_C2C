@@ -206,13 +206,15 @@ After running the full pipeline, `output/` will contain:
 
 ## Microservice Mode
 
-### Overview
+> ⚠️ **DEPRECATED since 2026-07-14 ([ADR 0012](../../../docs/adr/0012-compute-scheduling-plane-argo.md)).** In the AstraMolecula cluster this background-polling microservice **no longer runs** — its Deployment is scaled to `replicas: 0` and the polling/claiming code is dead. Scheduling is now owned by **Argo Workflows + the `compute-foundry` operator**; each pipeline stage runs as an ephemeral pod (`python -m highfold_c2c.steps {generate|predict|evaluate}`). The section below describes the legacy path, kept for local/standalone use and for rollback context.
 
-HighFold-C2C can also run as a background microservice that polls a PostgreSQL task queue and processes jobs automatically. This is designed for integration with the **AstraMolecula** platform.
+### Overview (legacy)
+
+HighFold-C2C can also run as a background microservice that polls a PostgreSQL task queue and processes jobs automatically. This was the pre-ADR-0012 integration with the **AstraMolecula** platform.
 
 **Architecture:**
 - **FastAPI** server on port 8003 (health check, task status, result retrieval)
-- **Background polling** — checks database every 180 seconds for `pending` tasks
+- **Background polling** — checks database every 180 seconds for `pending` tasks *(now off by default: gated behind `LEGACY_POLLER=1`; the cluster runs Argo instead)*
 - **SeaweedFS** object storage for input/output files
 - **Multi-worker** — `ThreadPoolExecutor` supports concurrent task processing
 
@@ -245,9 +247,9 @@ highfold-c2c-server --host 0.0.0.0 --port 8003
 ### Task Workflow
 
 1. An external system (e.g. AstraMolecula) inserts a row into the `tasks` table with `task_type='highfold_c2c'` and `status='pending'`, along with parameters in the `highfold_task_params` table
-2. The background worker picks up the task, downloads input files from SeaweedFS
-3. Runs the 3-stage pipeline (C2C → ColabFold → Evaluate)
-4. Uploads results to SeaweedFS and updates task status to `completed` or `failed`
+2. **Since ADR 0012:** the `compute-foundry` operator reconciles that row into an Argo Workflow `t-{task_id}`; the generic `fetch` step downloads inputs from SeaweedFS into `/work`. *(Legacy path: a background worker polled and picked it up — now dead code behind `replicas: 0`.)*
+3. Runs the 3-stage pipeline as separate pods (`generate` CPU → `predict` GPU → `evaluate` CPU)
+4. The generic `publish` step uploads results to SeaweedFS; the `finalize` onExit hook writes the terminal status (`finished`/`failed`) + a readable reason into `tasks`
 
 ### Database Tables
 
@@ -256,7 +258,7 @@ The service uses the shared AstraMolecula `tasks` table plus a dedicated paramet
 ```sql
 -- Parameters table (see database/init_highfold_tables.sql)
 CREATE TABLE highfold_task_params (
-    task_id       INTEGER PRIMARY KEY REFERENCES tasks(id),
+    task_id       CHAR(36) PRIMARY KEY REFERENCES tasks(id),  -- tasks.id 是 CHAR(36)，非 INTEGER
     core_sequence VARCHAR(100) NOT NULL,
     span_len      INTEGER DEFAULT 5,
     num_sample    INTEGER DEFAULT 20,

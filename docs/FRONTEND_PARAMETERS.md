@@ -26,7 +26,7 @@ HighFold-C2C 是一个三阶段的环肽设计与结构预测 pipeline：
 
 1. 在 `tasks` 表中创建一条记录（`task_type = 'highfold_c2c'`, `status = 'pending'`）
 2. 在 `highfold_task_params` 表中写入该任务的具体参数
-3. HighFold-C2C 微服务轮询数据库，取出 pending 任务并执行
+3. **（2026-07-14 起，[ADR 0012](../../../../docs/adr/0012-compute-scheduling-plane-argo.md)）** `compute-foundry` operator reconcile 到该 pending 行，提交为 Argo Workflow `t-{task_id}`，`generate→predict→evaluate` 各作为独立 pod 执行。~~（旧：HighFold-C2C 微服务轮询数据库取出 pending 任务——该长驻 worker 已 `replicas: 0`，轮询代码为死代码）~~
 
 因此，前端需要将用户输入的参数传递给后端 API，由后端写入这两张表。
 
@@ -53,7 +53,7 @@ HighFold-C2C 是一个三阶段的环肽设计与结构预测 pipeline：
 | **类型** | `string` (VARCHAR(50)) |
 | **默认值** | 无 — **必须由用户提供** |
 | **示例** | `"NNN"`, `"CNNNC"`, `"ACDEFG"` |
-| **说明** | 核心肽段氨基酸序列。C2C 模型会在此序列两端各延伸 `span_len` 个残基，生成完整的环肽序列。 |
+| **说明** | 核心肽段氨基酸序列。C2C 模型会在此序列**一侧追加** `span_len` 个残基，生成完整的环肽序列（拼接方式为 `core + span`，见 `c2c/generate.py:174`）。 |
 
 **前端 UI 建议：** 单行文本输入框，placeholder 为 `"请输入核心肽段序列，如 NNN"`
 
@@ -75,7 +75,7 @@ HighFold-C2C 是一个三阶段的环肽设计与结构预测 pipeline：
 | **类型** | `int` |
 | **默认值** | `5` |
 | **范围** | 1 ~ 15（推荐） |
-| **说明** | 在核心序列两端各延伸的残基数量。总环肽长度 = `len(core_sequence) + span_len × 2` |
+| **说明** | 在核心序列**一侧**追加的残基数量。总环肽长度 = `len(core_sequence) + span_len`（**单侧**，不是 ×2；后端 `highfold.py:115`、前端 `HighFoldC2C/index.tsx:101`、模型 `c2c/generate.py:174` 三处一致）。 |
 
 **前端 UI 建议：** 数字输入框或滑块（Slider），默认值 5
 
@@ -249,13 +249,15 @@ HighFold-C2C 是一个三阶段的环肽设计与结构预测 pipeline：
 ### 4.1 序列约束（来自原始 C2C 训练数据限制）
 
 ```
-总环肽长度 = len(core_sequence) + span_len × 2
+总环肽长度 = len(core_sequence) + span_len      # 单侧延伸，不是 ×2
 ```
+
+> ⚠️ **公式更正（2026-07-14）**：早期本文与前端校验曾用 `+ span_len × 2`（双侧），**是错的**。C2C 只在 core 一侧追加 span（`c2c/generate.py:174` 的 `core + s`），后端 `highfold.py:115` 与前端 `HighFoldC2C/index.tsx:101` 均为 `+ span_len`（单侧）。用 ×2 会把长度算大约 span 个残基，导致本可通过的输入被前端错误拦下。
 
 | 规则 | 公式 | 说明 |
 |------|------|------|
-| **最大长度** | `len(core) + span_len × 2 ≤ 20` | 训练数据多为 ≤15 aa，不建议超过 20 |
-| **核心比例** | `len(core) / (len(core) + span_len × 2) ≥ 0.3` | 核心太短、延伸太长会导致生成质量下降 |
+| **最大长度** | `len(core) + span_len ≤ 20` | 训练数据多为 ≤15 aa，不建议超过 20 |
+| **核心比例** | `len(core) / (len(core) + span_len) ≥ 0.3` | 核心太短、延伸太长会导致生成质量下降 |
 
 ### 4.2 前端验证伪代码
 
@@ -271,8 +273,8 @@ function validateParams(core: string, spanLen: number, numSample: number): strin
     return "序列只能包含标准氨基酸字母 (A,C,D,E,F,G,H,I,K,L,M,N,P,Q,R,S,T,V,W,Y)";
   }
 
-  // 3. 总长度限制
-  const totalLength = core.length + spanLen * 2;
+  // 3. 总长度限制（单侧延伸：core + span，不是 ×2）
+  const totalLength = core.length + spanLen;
   if (totalLength > 20) {
     return `总环肽长度 (${totalLength} aa) 超过上限 20。请缩短核心序列或减小延伸长度。`;
   }
@@ -294,15 +296,16 @@ function validateParams(core: string, spanLen: number, numSample: number): strin
 
 ### 4.3 有效参数组合示例
 
+> 总长度 = core + span_len（**单侧**）；有效 = 总长度 ≤ 20 **且** 核心占比 ≥ 30%。
+
 | core | span_len | 总长度 | 核心占比 | 是否有效 |
 |------|----------|--------|----------|---------|
-| `NNN` (3 aa) | 5 | 13 | 23% | ❌ 核心占比 < 30% |
-| `NNN` (3 aa) | 3 | 9 | 33% | ✅ |
-| `NNNNN` (5 aa) | 5 | 15 | 33% | ✅ |
-| `NNN` (3 aa) | 7 | 17 | 18% | ❌ 核心占比 < 30% |
-| `ACDEFG` (6 aa) | 7 | 20 | 30% | ✅ 刚好 |
-| `ACDEFG` (6 aa) | 8 | 22 | 27% | ❌ 总长度 > 20 |
-| `N` (1 aa) | 10 | 21 | 5% | ❌ 两个规则都违反 |
+| `NNN` (3 aa) | 5 | 8 | 38% | ✅ |
+| `NNN` (3 aa) | 7 | 10 | 30% | ✅ 刚好 |
+| `NN` (2 aa) | 6 | 8 | 25% | ❌ 核心占比 < 30% |
+| `NNNNN` (5 aa) | 5 | 10 | 50% | ✅ |
+| `ACDEFGHIJKLM` (12 aa) | 10 | 22 | 55% | ❌ 总长度 > 20 |
+| `N` (1 aa) | 10 | 11 | 9% | ❌ 核心占比 < 30% |
 
 ---
 
@@ -378,8 +381,8 @@ function validateParams(core: string, spanLen: number, numSample: number): strin
 │  │ 如 0,4 或 0,4:2,7                             │      │
 │  └───────────────────────────────────────────────┘      │
 │                                                         │
-│  📊 预估：总环肽长度 = 3 + 5×2 = 13 aa ✅               │
-│         核心占比 = 23% ⚠️ (建议 ≥30%)                   │
+│  📊 预估：总环肽长度 = 3 + 5 = 8 aa ✅                  │
+│         核心占比 = 38% ✅ (建议 ≥30%)                   │
 │                                                         │
 │  ▸ 高级参数                                              │
 │  ┌─────────────────────────────────────────────────┐    │

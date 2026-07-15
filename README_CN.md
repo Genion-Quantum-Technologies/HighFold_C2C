@@ -2,7 +2,7 @@
 
 HighFold-C2C 是一个统一的流水线工具，结合了 **C2C**（基于 T5 模型的环肽序列生成）与 **HighFold**（基于 CycPOEM 增强的 AlphaFold2 环肽结构预测）。
 
-它既可以作为 **独立 CLI 工具** 运行，也可以部署为 **微服务**，集成 FastAPI、PostgreSQL 任务追踪和 SeaweedFS 对象存储——遵循 AstraMolecula 平台的统一架构。
+它既可以作为 **独立 CLI 工具** 运行，也可以作为 **无状态 Argo step 镜像** 集成进 AstraMolecula 平台（`python -m highfold_c2c.steps {generate|predict|evaluate}`，每阶段一个 ephemeral pod）。旧的"轮询 PostgreSQL 任务队列的 FastAPI 微服务"模式自 2026-07-14 起被 Argo Workflows + `compute-foundry` operator 取代（[ADR 0012](../../../docs/adr/0012-compute-scheduling-plane-argo.md)），其长驻 Deployment 已 `replicas: 0`。
 
 ## 功能特性
 
@@ -205,13 +205,15 @@ colabfold_batch --model-type alphafold2 --msa-mode single_sequence \
 
 ## 微服务模式
 
-### 概述
+> ⚠️ **自 2026-07-14 起已弃用（[ADR 0012](../../../docs/adr/0012-compute-scheduling-plane-argo.md)）。** 在 AstraMolecula 集群里，这个"后台轮询微服务"**已不再运行**——其 Deployment `replicas: 0`，轮询/领活代码为死代码。调度改由 **Argo Workflows + `compute-foundry` operator** 负责，各阶段作为 ephemeral pod 执行。以下为遗留路径，保留供本地/独立运行与回滚参考。
 
-HighFold-C2C 可以作为后台微服务运行，自动轮询 PostgreSQL 任务队列并处理任务。此模式专为与 **AstraMolecula** 平台集成而设计。
+### 概述（遗留）
+
+HighFold-C2C 曾作为后台微服务运行，自动轮询 PostgreSQL 任务队列并处理任务。这是 ADR 0012 之前与 **AstraMolecula** 平台的集成方式。
 
 **架构：**
 - **FastAPI** 服务器（端口 8003）—— 健康检查、任务状态查询、结果下载
-- **后台轮询** —— 每 180 秒检查数据库中的 `pending` 状态任务
+- **后台轮询** —— 每 180 秒检查数据库中的 `pending` 状态任务 *(现默认关闭：需 `LEGACY_POLLER=1` 才启动；集群改用 Argo)*
 - **SeaweedFS** 对象存储 —— 统一管理输入/输出文件
 - **多 Worker** —— `ThreadPoolExecutor` 支持并发任务处理
 
@@ -255,7 +257,7 @@ highfold-c2c-server --host 0.0.0.0 --port 8003
 ```sql
 -- 参数表（详见 database/init_highfold_tables.sql）
 CREATE TABLE highfold_task_params (
-    task_id       INTEGER PRIMARY KEY REFERENCES tasks(id),
+    task_id       CHAR(36) PRIMARY KEY REFERENCES tasks(id),  -- tasks.id 是 CHAR(36)，非 INTEGER
     core_sequence VARCHAR(100) NOT NULL,   -- 核心肽段序列
     span_len      INTEGER DEFAULT 5,       -- 延伸长度
     num_sample    INTEGER DEFAULT 20,      -- 采样数量

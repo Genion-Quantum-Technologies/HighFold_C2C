@@ -246,9 +246,9 @@ highfold-c2c-server --host 0.0.0.0 --port 8003
 ### 任务工作流
 
 1. 外部系统（如 AstraMolecula）在 `tasks` 表中插入一行记录，`task_type='highfold_c2c'`、`status='pending'`，并在 `highfold_task_params` 表中写入参数
-2. 后台 Worker 捡起任务，从 SeaweedFS 下载输入文件
-3. 运行 3 阶段流水线（C2C 生成 → ColabFold 预测 → 评估打分）
-4. 将结果上传至 SeaweedFS，更新任务状态为 `completed` 或 `failed`
+2. **自 ADR 0012 起**：`compute-foundry` operator 将该行 reconcile 成 Argo Workflow `t-{task_id}`；通用 `fetch` 步骤从 SeaweedFS 把输入下载到 `/work`。*（遗留路径：后台 Worker 轮询领取——现已是 `replicas: 0` 后的死代码。）*
+3. 以独立 pod 运行 3 阶段流水线（`generate` CPU → `predict` GPU → `evaluate` CPU）
+4. 通用 `publish` 步骤把结果上传至 SeaweedFS；`finalize` onExit 钩子把终态（`finished`/`failed`）+ 可读原因写回 `tasks`
 
 ### 数据库表
 

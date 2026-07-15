@@ -4,6 +4,8 @@
 > Pipeline 通过 `subprocess` 调用 `colabfold_batch` CLI 完成结构预测阶段；  
 > 单一 conda 环境同时包含 PyTorch（C2C）和 JAX（HighFold）依赖。
 
+> **注（2026-07）**：本文是合并**计划**。**实际落地采用了两个 conda 环境**——`environment.yml`（`highfold_c2c`，PyTorch，`transformers==4.46.3`）+ `colabfold_environment.yml`（`colabfold`，JAX），因 JAX/PyTorch 依赖冲突刻意分离；"单一 conda 环境"未被采纳。
+
 ## 1. 合并动机
 
 | 现状问题 | 合并后改善 |

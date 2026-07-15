@@ -2,6 +2,8 @@
 
 **日期**: 2026-03-04
 
+> **注（2026-07-14，ADR 0012）**：本文是 **2026-03-04** 的事后分析。其涉及的 `highfold_c2c.core.task_processor` 轮询路径现已是死代码；`colabfold_batch` 的可用性由 Argo step 镜像保证，不再依赖对 `docker/Dockerfile` 的手工改动。下文为历史记录，保留原状。
+
 ---
 
 ## 概述

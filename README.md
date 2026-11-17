@@ -1,3 +1,5 @@
+> Current runtime: [Argo scientific stages](docs/argo-runtime.md). Legacy HTTP/polling service instructions below are historical.
+
 # HighFold-C2C: Cyclic Peptide Design and Structure Prediction
 
 HighFold-C2C is a unified pipeline that combines **C2C** (cyclic peptide sequence generation using a T5 model) with **HighFold** (cyclic peptide structure prediction using CycPOEM-enhanced AlphaFold2).

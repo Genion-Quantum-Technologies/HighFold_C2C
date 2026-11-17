@@ -56,4 +56,4 @@ RUN mkdir -p /tmp/highfold_c2c/logs /tmp/highfold_c2c/resource
 EXPOSE 8003
 
 ENTRYPOINT ["mamba", "run", "--no-capture-output", "-n", "highfold_c2c"]
-CMD ["uvicorn", "highfold_c2c.app:app", "--host", "0.0.0.0", "--port", "8003"]
+CMD ["python", "-m", "highfold_c2c.steps", "--help"]

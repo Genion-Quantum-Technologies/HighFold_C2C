@@ -1,0 +1,8 @@
+# Preserve the verified scientific environment; remove retired service source.
+ARG BASE_IMAGE=hub.genionaitech.com/aidd/highfold-c2c@sha256:3ae45062649a9156fe9b5f202dcc97a0adebf50d05571aeecc2905033c5cd6b9
+FROM ${BASE_IMAGE}
+USER root
+RUN rm -rf /app/src/highfold_c2c
+COPY src/highfold_c2c/ /app/src/highfold_c2c/
+HEALTHCHECK NONE
+CMD ["python", "-m", "highfold_c2c.steps", "--help"]
